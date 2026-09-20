@@ -1,12 +1,11 @@
-import { Build, BuildBlocksSet, Teams, Damage, BreackGraph, Ui, Properties, GameMode, Spawns, room, Timers, Players, Inventory, AreaService, AreaPlayerTriggerService, contextedProperties } from 'pixel_combats/room';
+import { Build, BuildBlocksSet, Teams, Damage, BreackGraph, Ui, Properties, GameMode, Spawns, room, Timers, Players, AreaService, AreaPlayerTriggerService, contextedProperties } from 'pixel_combats/room';
 import * as RoomAPI from 'pixel_combats/room';
 import * as peace from './options.js';
 import * as teams from './default_teams.js';
 
-// === КОНСТАНТЫ ===
-var ADMIN_GAME_ID = "70ECCE4D1F5A8933";
-
-// === ХРАНИЛИЩА ===
+// ==========================================
+// ХРАНИЛИЩА
+// ==========================================
 var playerIdCounter = 0;
 var playersByNumId = {};
 var bannedPlayers = {};
@@ -18,7 +17,9 @@ var playerTransferAmountIdx = {};
 var transferAmounts = [100, 200, 500, 1000, 2000, 5000];
 var uptimeSeconds = 0;
 
-// === БАЗОВЫЕ НАСТРОЙКИ ===
+// ==========================================
+// БАЗОВЫЕ НАСТРОЙКИ
+// ==========================================
 room.PopupsEnable = true;
 Damage.FriendlyFire = false;
 BreackGraph.OnlyPlayerBlocksDmg = false;
@@ -30,69 +31,83 @@ peace.set_editor_options();
 Damage.GetContext().DamageOut.Value = true;
 Properties.GetContext().GameModeName.Value = "GameModes/EDITOR";
 
-// === СОЗДАНИЕ КОМАНДЫ ===
+// ==========================================
+// КОМАНДА (только синяя)
+// ==========================================
 teams.create_team_blue();
 
-// === ВХОД В КОМАНДУ И СПАВН ===
-Teams.OnRequestJoinTeam.Add(function(player, team) { team.Add(player); });
-Teams.OnPlayerChangeTeam.Add(function(player) {
+// ==========================================
+// ВХОД В КОМАНДУ, ID, АДМИНКА, СПАВН
+// ==========================================
+function safeAddEvent(obj, handler) {
+    try { obj.Add(handler); return true; }
+    catch(e) {
+        try { obj.add_Event(handler); return true; }
+        catch(e2) { return false; }
+    }
+}
+
+safeAddEvent(Teams.OnRequestJoinTeam, function(player, team) { team.Add(player); });
+safeAddEvent(Teams.OnPlayerChangeTeam, function(player) {
     assign_player_id(player);
     check_admin(player);
     player.Spawns.Spawn();
 });
 
-// === ИГРОК ОТКЛЮЧИЛСЯ ===
+// Очистка при выходе
 try {
     Players.OnPlayerDisconnected.Add(function(player) {
         remove_player(player);
     });
 } catch(e) {}
 
-// === БАЗОВЫЙ ИНВЕНТАРЬ (нет оружия, только блоки) ===
+// ==========================================
+// ИНВЕНТАРЬ И СПАВН
+// ==========================================
 peace.set_editor_inventory();
-
-// === МГНОВЕННЫЙ РЕСПАВН ===
 Spawns.GetContext().RespawnTime.Value = 0;
 
-// === РАДУЖНЫЙ ТЕКСТ + АПТАЙМ ===
+// ==========================================
+// АПТАЙМ-ТАЙМЕР (правое окно) — бесконечное время
+// ==========================================
+var mainTimer = Timers.GetContext().Get("Main");
+mainTimer.Restart(999999);
+try { Ui.GetContext().MainTimerId.Value = mainTimer.Id; } catch(e) {}
+
+// ==========================================
+// РАДУЖНЫЙ ТЕКСТ + АПТАЙМ (левая сторона)
+// ==========================================
 var loopTimer = Timers.GetContext().Get("Loop");
-var displayTimer = Timers.GetContext().Get("Display");
 loopTimer.RestartLoop(1);
 loopTimer.OnTimer.Add(function() {
     uptimeSeconds++;
-    displayTimer.Restart(uptimeSeconds + 1);
     var colors = ["#FF0000","#FF7F00","#FFFF00","#00FF00","#00FFFF","#0000FF","#8B00FF"];
     var colorIdx = Math.floor(uptimeSeconds / 2) % colors.length;
-    Ui.GetContext().Hint.Value = "<color=" + colors[colorIdx] + ">это режим от тяночки!</color>";
+    var upStr = get_uptime_string();
+    try {
+        Ui.GetContext().Hint.Value = "<color=" + colors[colorIdx] + ">это режим от тяночки!</color>\nАптайм: " + upStr;
+    } catch(e) {
+        Ui.GetContext().Hint.Value = "это режим от тяночки! | Аптайм: " + upStr;
+    }
 });
-Ui.GetContext().MainTimerId.Value = displayTimer.Id;
 
-// === ИНИЦИАЛИЗАЦИЯ ЗОН ===
+// ==========================================
+// ЗОНЫ
+// ==========================================
 try { setup_farm_zones(); } catch(e) {}
 try { setup_shop_zones(); } catch(e) {}
 try { setup_hp_zones(); } catch(e) {}
 try { setup_hint_zones(); } catch(e) {}
 try { setup_plata_zones(); } catch(e) {}
 
-// === ЧАТ-КОМАНДЫ (безопасное подключение) ===
-try {
-    if (RoomAPI.Chat) {
-        if (RoomAPI.Chat.OnPlayerMessage) {
-            RoomAPI.Chat.OnPlayerMessage.Add(function(player, message) {
-                handle_command(player, message);
-            });
-        } else if (RoomAPI.Chat.OnMessage) {
-            RoomAPI.Chat.OnMessage.Add(function(player, message) {
-                handle_command(player, message);
-            });
-        }
-    }
-} catch(e) {}
+// ==========================================
+// ЧАТ-КОМАНДЫ
+// ==========================================
+try { init_chat_commands(); } catch(e) {}
 
 // ==========================================
-// ФУНКЦИИ: АДМИНКА И ID
+// ФУНКЦИИ: ID И АДМИНКА
 // ==========================================
-
 function assign_player_id(player) {
     try {
         var idProp = player.Properties.Get("PlayerId");
@@ -108,18 +123,15 @@ function assign_player_id(player) {
 function check_admin(player) {
     var numId = 0;
     try { numId = player.Properties.Get("PlayerId").Value; } catch(e) {}
-    // Первый игрок (ID: 1) = админ
-    if (numId === 1) { give_admin(player); return; }
-    // Также проверяем по game ID (если player.Id существует)
-    try {
-        var gid = player.Id;
-        if (gid && String(gid).toUpperCase() === ADMIN_GAME_ID) {
-            give_admin(player);
-            return;
-        }
-    } catch(e) {}
-    // Проверяем по списку (для /adm)
-    if (adminPlayers[numId]) { give_admin(player); }
+    // Первый зашедший (ID: 1) = админ
+    if (numId === 1) {
+        give_admin(player);
+        return;
+    }
+    // Для команды /adm
+    if (adminPlayers[numId]) {
+        give_admin(player);
+    }
 }
 
 function give_admin(player) {
@@ -134,25 +146,9 @@ function give_admin(player) {
         player.Inventory.MainInfinity.Value = true;
         player.Inventory.SecondaryInfinity.Value = true;
         player.Inventory.BuildInfinity.Value = true;
-        try { player.Inventory.ExplosiveInfinity.Value = true; } catch(e) {}
+        try { player.Inventory.ExplosiveInfinity.Value = true; } catch(e2) {}
         player.PopUp("Вы получили админку!");
-    } catch(e) {
-        // Запасной вариант через команду
-        try {
-            var team = player.Team;
-            if (team) {
-                team.Inventory.Main.Value = true;
-                team.Inventory.Secondary.Value = true;
-                team.Inventory.Melee.Value = true;
-                team.Inventory.Explosive.Value = true;
-                team.Inventory.Build.Value = true;
-                team.Inventory.MainInfinity.Value = true;
-                team.Inventory.SecondaryInfinity.Value = true;
-                team.Inventory.BuildInfinity.Value = true;
-            }
-            player.PopUp("Админка выдана!");
-        } catch(e2) {}
-    }
+    } catch(e) {}
 }
 
 function remove_player(player) {
@@ -166,7 +162,9 @@ function remove_player(player) {
     } catch(e) {}
 }
 
-function get_player_by_id(numId) { return playersByNumId[numId] || null; }
+function get_player_by_id(numId) {
+    return playersByNumId[numId] || null;
+}
 
 function is_admin(player) {
     try {
@@ -214,7 +212,6 @@ function setup_farm_zones() {
         (function(area) {
             var trigger = AreaPlayerTriggerService.Get(area.Name + "_farm");
             trigger.Area = area;
-            trigger.Enable = true;
             var cooldown = {};
             trigger.OnEnter.Add(function(player) {
                 var pId = 0;
@@ -243,7 +240,6 @@ function setup_shop_zones() {
         (function(area) {
             var trigger = AreaPlayerTriggerService.Get(area.Name + "_shop");
             trigger.Area = area;
-            trigger.Enable = true;
             var cooldown = {};
             trigger.OnEnter.Add(function(player) {
                 var pId = 0;
@@ -292,7 +288,6 @@ function setup_hp_zones() {
         (function(area) {
             var trigger = AreaPlayerTriggerService.Get(area.Name + "_hp");
             trigger.Area = area;
-            trigger.Enable = true;
             var cooldown = {};
             trigger.OnEnter.Add(function(player) {
                 var pId = 0;
@@ -313,15 +308,11 @@ function setup_hp_zones() {
                 }
                 set_coins(player, coins - price);
                 try {
-                    player.ContextedProperties.MaxHp.Value = (player.ContextedProperties.MaxHp.Value || 100) + hpAmount;
+                    var ctx = contextedProperties.GetContext();
+                    ctx.MaxHp.Value = (ctx.MaxHp.Value || 100) + hpAmount;
                     player.PopUp("Куплено " + hpAmount + " HP за " + price + " монет");
                 } catch(e) {
-                    try {
-                        contextedProperties.GetContext().MaxHp.Value = (contextedProperties.GetContext().MaxHp.Value || 100) + hpAmount;
-                        player.PopUp("Куплено " + hpAmount + " HP за " + price + " монет");
-                    } catch(e2) {
-                        try { player.PopUp("Куплено " + hpAmount + " HP за " + price + " монет"); } catch(e3) {}
-                    }
+                    try { player.PopUp("Куплено " + hpAmount + " HP за " + price + " монет"); } catch(e2) {}
                 }
             });
         })(areas[i]);
@@ -338,7 +329,6 @@ function setup_hint_zones() {
         (function(area) {
             var trigger = AreaPlayerTriggerService.Get(area.Name + "_hint");
             trigger.Area = area;
-            trigger.Enable = true;
             trigger.OnEnter.Add(function(player) {
                 try { player.PopUp(area.Name); } catch(e) {}
             });
@@ -357,7 +347,6 @@ function setup_plata_zones() {
             (function(area) {
                 var trigger = AreaPlayerTriggerService.Get(area.Name + "_plata1");
                 trigger.Area = area;
-                trigger.Enable = true;
                 trigger.OnEnter.Add(function(player) {
                     var pId = 0;
                     try { pId = player.Properties.Get("PlayerId").Value; } catch(e) { return; }
@@ -365,7 +354,7 @@ function setup_plata_zones() {
                     if (!playerTransferAmountIdx[pId]) playerTransferAmountIdx[pId] = 0;
                     playerTransferAmountIdx[pId] = (playerTransferAmountIdx[pId] + 1) % transferAmounts.length;
                     playerTransferAmount[pId] = transferAmounts[playerTransferAmountIdx[pId]];
-                    try { player.PopUp("Сумма перевода: " + playerTransferAmount[pId] + "\n(ещё раз — сменить)"); } catch(e) {}
+                    try { player.PopUp("Сумма: " + playerTransferAmount[pId] + "\n(ещё раз — сменить)"); } catch(e) {}
                 });
             })(areas1[i]);
         }
@@ -377,7 +366,6 @@ function setup_plata_zones() {
             (function(area) {
                 var trigger = AreaPlayerTriggerService.Get(area.Name + "_plata2");
                 trigger.Area = area;
-                trigger.Enable = true;
                 trigger.OnEnter.Add(function(player) {
                     var pId = 0;
                     try { pId = player.Properties.Get("PlayerId").Value; } catch(e) { return; }
@@ -406,7 +394,6 @@ function setup_plata_zones() {
             (function(area) {
                 var trigger = AreaPlayerTriggerService.Get(area.Name + "_plata3");
                 trigger.Area = area;
-                trigger.Enable = true;
                 trigger.OnEnter.Add(function(player) {
                     var pId = 0;
                     try { pId = player.Properties.Get("PlayerId").Value; } catch(e) { return; }
@@ -414,4 +401,140 @@ function setup_plata_zones() {
                     var amount = playerTransferAmount[pId];
                     var targetId = playerTransferTarget[pId];
                     if (!amount) {
-                        try
+                        try { player.PopUp("Сначала выберите сумму (plata1)"); } catch(e) {}
+                        return;
+                    }
+                    if (!targetId) {
+                        try { player.PopUp("Сначала выберите получателя (plata2)"); } catch(e) {}
+                        return;
+                    }
+                    var targetPlayer = get_player_by_id(targetId);
+                    if (!targetPlayer) {
+                        try { player.PopUp("Игрок не найден"); } catch(e) {}
+                        return;
+                    }
+                    var coins = get_coins(player);
+                    if (coins < amount) {
+                        try { player.PopUp("Недостаточно средств!\nНужно: " + amount + "\nУ вас: " + coins); } catch(e) {}
+                        return;
+                    }
+                    set_coins(player, coins - amount);
+                    set_coins(targetPlayer, get_coins(targetPlayer) + amount);
+                    try { player.PopUp("Переведено " + amount + " игроку #" + targetId); } catch(e) {}
+                    try { targetPlayer.PopUp("Получено " + amount + " от #" + pId); } catch(e) {}
+                });
+            })(areas3[i]);
+        }
+    }
+}
+
+// ==========================================
+// ЧАТ-КОМАНДЫ
+// ==========================================
+function init_chat_commands() {
+    var Chat = RoomAPI.Chat;
+    if (!Chat) return;
+
+    // Пробуем разные варианты названий события
+    var attached = false;
+    if (Chat.OnPlayerMessage) {
+        try { Chat.OnPlayerMessage.Add(function(player, message) { handle_command(player, message); }); attached = true; } catch(e) {}
+    }
+    if (!attached && Chat.OnMessage) {
+        try { Chat.OnMessage.Add(function(player, message) { handle_command(player, message); }); attached = true; } catch(e) {}
+    }
+}
+
+function handle_command(player, message) {
+    if (!message || message[0] !== '/') return;
+    var cmdEnd = message.indexOf('(');
+    var command, args;
+    if (cmdEnd === -1) {
+        command = message.substring(1).trim().toLowerCase();
+        args = "";
+    } else {
+        command = message.substring(1, cmdEnd).trim().toLowerCase();
+        var closeParen = message.indexOf(')', cmdEnd);
+        args = closeParen === -1 ? message.substring(cmdEnd + 1) : message.substring(cmdEnd + 1, closeParen);
+    }
+
+    switch (command) {
+        case 'tp': cmd_tp(player, args); break;
+        case 'pop': cmd_pop(player, args); break;
+        case 'spawn': cmd_spawn(player, args); break;
+        case 'adm': cmd_adm(player, args); break;
+        case 'ban': cmd_ban(player, args); break;
+        case 'help': cmd_help(player); break;
+        case 'id': cmd_id(player); break;
+        case 'list': cmd_list(player); break;
+    }
+}
+
+function cmd_tp(player, args) {
+    if (!is_admin(player)) { try { player.PopUp("Нет прав!"); } catch(e) {} return; }
+    var parts = args.split(',');
+    if (parts.length !== 2) { try { player.PopUp("/tp(id1,id2)"); } catch(e) {} return; }
+    var id1 = parseInt(parts[0].trim());
+    var id2 = parseInt(parts[1].trim());
+    var t1 = get_player_by_id(id1);
+    var t2 = get_player_by_id(id2);
+    if (!t1 || !t2) { try { player.PopUp("Игрок не найден"); } catch(e) {} return; }
+    try { t2.Spawns.Spawn(); t2.PopUp("Телепорт к #" + id1); player.PopUp("Готово: #" + id2 + " → #" + id1); } catch(e) {}
+}
+
+function cmd_pop(player, args) {
+    if (!is_admin(player)) { try { player.PopUp("Нет прав!"); } catch(e) {} return; }
+    if (!args) { try { player.PopUp("/pop(текст)"); } catch(e) {} return; }
+    for (var id in playersByNumId) {
+        try { playersByNumId[id].PopUp(args); } catch(e) {}
+    }
+}
+
+function cmd_spawn(player, args) {
+    if (!is_admin(player)) { try { player.PopUp("Нет прав!"); } catch(e) {} return; }
+    var id = parseInt(args.trim());
+    if (isNaN(id)) { try { player.Spawns.Spawn(); player.PopUp("Вы на спавне"); } catch(e) {} return; }
+    var target = get_player_by_id(id);
+    if (!target) { try { player.PopUp("#" + id + " не найден"); } catch(e) {} return; }
+    try { target.Spawns.Spawn(); target.PopUp("Отправлен на спавн"); player.PopUp("#" + id + " на спавне"); } catch(e) {}
+}
+
+function cmd_adm(player, args) {
+    if (!is_admin(player)) { try { player.PopUp("Нет прав!"); } catch(e) {} return; }
+    var id = parseInt(args.trim());
+    if (isNaN(id)) { try { player.PopUp("/adm(id)"); } catch(e) {} return; }
+    var target = get_player_by_id(id);
+    if (!target) { try { player.PopUp("#" + id + " не найден"); } catch(e) {} return; }
+    give_admin(target);
+    try { player.PopUp("Админка выдана #" + id); } catch(e) {}
+}
+
+function cmd_ban(player, args) {
+    if (!is_admin(player)) { try { player.PopUp("Нет прав!"); } catch(e) {} return; }
+    var id = parseInt(args.trim());
+    if (isNaN(id)) { try { player.PopUp("/ban(id)"); } catch(e) {} return; }
+    var ok = ban_player_by_id(id);
+    try { player.PopUp(ok ? "#" + id + " забанен" : "#" + id + " не найден"); } catch(e) {}
+}
+
+function cmd_help(player) {
+    try {
+        player.PopUp("Команды:\n/tp(id1,id2) /pop(текст)\n/spawn(id) /adm(id) /ban(id)\n/id /list\nАптайм: " + get_uptime_string());
+    } catch(e) {}
+}
+
+function cmd_id(player) {
+    try {
+        var id = player.Properties.Get("PlayerId").Value;
+        player.PopUp("Ваш ID: " + id);
+    } catch(e) {}
+}
+
+function cmd_list(player) {
+    try {
+        var text = "Онлайн:\n";
+        for (var id in playersByNumId) { text += "#" + id + " "; }
+        text += "\nАптайм: " + get_uptime_string();
+        player.PopUp(text);
+    } catch(e) {}
+}
