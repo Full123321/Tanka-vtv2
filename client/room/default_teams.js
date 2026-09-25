@@ -1,12 +1,35 @@
-import { Color } from 'pixel_combats/basic';
-import { Teams } from 'pixel_combats/room';
+export function setupTeams() {
+    try {
+        const allTeams = Teams.GetAll();
+        for (let i = 0; i < allTeams.length; i++) {
+            Teams.Remove(allTeams[i].Tag);
+        }
 
-export const BLUE_TEAM_NAME = "Blue";
-export const BLUE_TEAM_DISPLAY_NAME = "Teams/Blue";
-export const BLUE_TEAM_SPAWN_POINTS_GROUP = 1;
+        Teams.Add('Black', 'Чёрные', { r: 0, g: 0, b: 0 });
+        const blackTeam = Teams.Get('Black');
+        const blueTeam = Teams.Get('Blue');
 
-export function create_team_blue() {
-    Teams.Add(BLUE_TEAM_NAME, BLUE_TEAM_DISPLAY_NAME, new Color(0, 0, 1, 1));
-    Teams.Get(BLUE_TEAM_NAME).Spawns.SpawnPointsGroups.Add(BLUE_TEAM_SPAWN_POINTS_GROUP);
-    return Teams.Get(BLUE_TEAM_NAME);
+        if (blueTeam) {
+            const blueSpawns = Spawns.GetContext(blueTeam);
+            const blackSpawns = Spawns.GetContext(blackTeam);
+
+            for (let i = 0; i < blueSpawns.SpawnPointsGroups.Count; i++) {
+                const group = blueSpawns.SpawnPointsGroups.Get(i);
+                blackSpawns.SpawnPointsGroups.Add(group);
+            }
+
+            for (let i = 0; i < blueSpawns.CustomSpawnPoints.Count; i++) {
+                const point = blueSpawns.CustomSpawnPoints.Get(i);
+                blackSpawns.CustomSpawnPoints.Add(point.X, point.Y, point.Z, point.Rotation);
+            }
+        }
+
+        Teams.OnPlayerChangeTeam.Add(function(player) {
+            if (player.Team.Tag !== 'Black') {
+                player.Team = blackTeam;
+            }
+        });
+    } catch (e) {
+        console.error("Teams setup error: " + e.message);
+    }
 }
