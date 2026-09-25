@@ -1,22 +1,7 @@
 {
-  "Name": "режим от тянки! сосите хуи!",
-  "Description": "хз что сюда написать это просто режим от тяночки",
-  "StartClientVersion": 334,
-  "ApiVersion": 2,
-  "PopupsEnabled": true,
-  "MapLists": [
-    {
-      "MapListId": 8401,
-      "Name": "Заготовки"
-    }
-  ],
-  "Parameters": {
-    "Bool": [
-      {
-        "Name": "BlueTeam",
-        "DisplayName": "Teams/Blue",
-        "Default": true
-      }
-    ]
-  }
+  "name": "тянка немного занята",
+  "description": "хз что сюда писать просто режим от тянки",
+  "version": "1.0.0",
+  "author": "ТвоеИмя",
+  "apiVersion": "2.0"
 }
