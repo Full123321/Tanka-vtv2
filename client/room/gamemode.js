@@ -1,42 +1,66 @@
-// Попытка импорта. Если среда не поддерживает ES6 модули, эти строки могут быть проигнорированы или вызвать ошибку.
-// Если игра ругается на import, удалите эти две строки и вставьте код из default_teams.js и options.js прямо сюда.
-let setupTeamsFunc;
-let configObj;
+// ==========================================
+// КОНФИГУРАЦИЯ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ==========================================
 
-try {
-    const teamsModule = require('./default_teams.js'); // Попытка CommonJS
-    const optionsModule = require('./options.js');
-    setupTeamsFunc = teamsModule.setupTeams;
-    configObj = optionsModule.CONFIG;
-} catch (e) {
+const CONFIG = {
+    rainbowColors: ["#FF0000", "#FFA500", "#FFFF00", "#008000", "#0000FF", "#4B0082", "#EE82EE"],
+    itemIds: {
+        primary: 0, secondary: 1, melee: 2, grenade: 3, block: 4,
+        inf_primary: 5, inf_secondary: 6, inf_grenade: 7, inf_block: 8
+    },
+    uiLabels: { K: "Статусы!", D: "R (Рум Айди)", S: "Монеты!", RID: "Убийства" }
+};
+
+function setupTeams() {
     try {
-        // Попытка ES6 импорта (если используется сборщик)
-        const { setupTeams } = require('./default_teams.js');
-        const { CONFIG } = require('./options.js');
-        setupTeamsFunc = setupTeams;
-        configObj = CONFIG;
-    } catch (e2) {
-        // Если ничего не вышло, предполагаем, что функции глобальные или будут подключены иначе
-        setupTeamsFunc = window.setupTeams || setupTeams; 
-        configObj = window.CONFIG || CONFIG;
+        const allTeams = Teams.GetAll();
+        for (let i = 0; i < allTeams.length; i++) {
+            if (allTeams[i].Tag) Teams.Remove(allTeams[i].Tag);
+        }
+
+        if (!Teams.Get('Black')) {
+            Teams.Add('Black', 'Чёрные', { r: 0, g: 0, b: 0 });
+        }
+        
+        const blackTeam = Teams.Get('Black');
+        if (!blackTeam) return;
+
+        const blueTeam = Teams.Get('Blue');
+        if (blueTeam) {
+            const blueSpawns = Spawns.GetContext(blueTeam);
+            const blackSpawns = Spawns.GetContext(blackTeam);
+            if (blueSpawns && blackSpawns) {
+                for (let i = 0; i < blueSpawns.SpawnPointsGroups.Count; i++) {
+                    blackSpawns.SpawnPointsGroups.Add(blueSpawns.SpawnPointsGroups.Get(i));
+                }
+                for (let i = 0; i < blueSpawns.CustomSpawnPoints.Count; i++) {
+                    const p = blueSpawns.CustomSpawnPoints.Get(i);
+                    if (p) blackSpawns.CustomSpawnPoints.Add(p.X, p.Y, p.Z, p.Rotation);
+                }
+            }
+        }
+
+        Teams.OnPlayerChangeTeam.Add(function(player) {
+            if (player && player.Team && player.Team.Tag !== 'Black') {
+                player.Team = blackTeam;
+            }
+        });
+    } catch (e) {
+        console.error("Ошибка setupTeams: " + e.message);
     }
 }
 
-// Если функции не найдены, создаем заглушки, чтобы код не падал сразу
-if (!setupTeamsFunc) {
-    setupTeamsFunc = function() { console.log("Функция setupTeams не найдена"); };
-}
-if (!configObj) {
-    configObj = CONFIG; // fallback на глобальный объект если он есть
-}
+// ==========================================
+// ОСНОВНАЯ ЛОГИКА
+// ==========================================
 
 const players = new Map();
 let serverStartTime = Date.now();
 let firstPlayerAssigned = false;
 let colorIndex = 0;
 
-// Инициализация команд
-setupTeamsFunc();
+// Инициализация
+setupTeams();
 
 RoomAPI.OnPlayerJoin.Add(function(player) {
     if (!player || !player.Id) return;
@@ -57,25 +81,24 @@ RoomAPI.OnPlayerJoin.Add(function(player) {
 
     players.set(player.Id, pData);
 
+    // Выдача админки первому игроку
     if (!firstPlayerAssigned) {
         pData.isAdmin = true;
         pData.canFly = true;
         pData.hasAllWeapons = true;
         pData.canBuild = true;
         firstPlayerAssigned = true;
-        if(player.Chat) player.Chat.SendMessage("Поздравляем! Вы главный администратор режима.");
+        if (player.Chat) player.Chat.SendMessage("Поздравляем! Вы главный администратор режима.");
     }
 
+    // Принудительное назначение команды
     const blackTeam = Teams.Get('Black');
     if (blackTeam) player.Team = blackTeam;
-
-    updateOnlineList();
 });
 
 RoomAPI.OnPlayerLeave.Add(function(player) {
     if (player && player.Id) {
         players.delete(player.Id);
-        updateOnlineList();
     }
 });
 
@@ -91,7 +114,7 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
         const amount = parseInt(name);
         if (!isNaN(amount) && amount > 0) {
             pData.coins += amount;
-            if(player.Chat) player.Chat.SendMessage(`+${amount} монет! Всего: ${pData.coins}`);
+            if (player.Chat) player.Chat.SendMessage(`+${amount} монет! Всего: ${pData.coins}`);
         }
     }
 
@@ -100,14 +123,14 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
         const parts = name.split('@');
         if (parts.length === 2) {
             const itemId = parseInt(parts);
-            const price = parseInt(parts);
+            const price = parseInt(parts[1](https://otvet.mail.ru/question/240544470));
             if (!isNaN(itemId) && !isNaN(price)) {
                 if (pData.coins >= price) {
                     pData.coins -= price;
                     giveItem(player, itemId);
-                    if(player.Chat) player.Chat.SendMessage("Предмет получен!");
-                } else {
-                    if(player.Chat) player.Chat.SendMessage("Недостаточно средств!");
+                    if (player.Chat) player.Chat.SendMessage("Предмет получен!");
+                } else if (player.Chat) {
+                    player.Chat.SendMessage("Недостаточно средств!");
                 }
             }
         }
@@ -118,14 +141,14 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
         const parts = name.split('@');
         if (parts.length === 2) {
             const hpAmount = parseInt(parts);
-            const price = parseInt(parts);
+            const price = parseInt(parts[1](https://otvet.mail.ru/question/240544470));
             if (!isNaN(hpAmount) && !isNaN(price)) {
                 if (pData.coins >= price) {
                     pData.coins -= price;
                     pData.hp = Math.min(100, pData.hp + hpAmount);
-                    if(player.Chat) player.Chat.SendMessage("Здоровье восстановлено!");
-                } else {
-                    if(player.Chat) player.Chat.SendMessage("Недостаточно средств!");
+                    if (player.Chat) player.Chat.SendMessage("Здоровье восстановлено!");
+                } else if (player.Chat) {
+                    player.Chat.SendMessage("Недостаточно средств!");
                 }
             }
         }
@@ -136,17 +159,17 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
         const parts = name.split('@');
         if (parts.length === 3) {
             const color = parts;
-            const statusName = parts;
-            const price = parseInt(parts);
+            const statusName = parts[1](https://otvet.mail.ru/question/240544470);
+            const price = parseInt(parts[2](https://devforum.roblox.com/t/need-help-with-gamemode/1503888));
             
             if (!isNaN(price)) {
                 if (pData.coins >= price) {
                     pData.coins -= price;
                     pData.statuses.push({ name: statusName, color: color });
                     updateUIStatus(player, pData);
-                    if(player.Chat) player.Chat.SendMessage(`Статус "\${statusName}" получен!`);
-                } else {
-                    if(player.Chat) player.Chat.SendMessage("Недостаточно средств!");
+                    if (player.Chat) player.Chat.SendMessage(`Статус "\${statusName}" получен!`);
+                } else if (player.Chat) {
+                    player.Chat.SendMessage("Недостаточно средств!");
                 }
             }
         }
@@ -156,12 +179,12 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
     if (tag === "status2") {
         const parts = name.split('@');
         if (parts.length >= 2) {
-            const requiredName = parts;
+            const requiredName = parts[1](https://otvet.mail.ru/question/240544470);
             const hasStatus = pData.statuses.some(s => s.name === requiredName);
             
             if (!hasStatus) {
                 player.Spawns.Spawn();
-                if(player.Chat) player.Chat.SendMessage("Доступ запрещен! Нужен статус: " + requiredName);
+                if (player.Chat) player.Chat.SendMessage("Доступ запрещен! Нужен статус: " + requiredName);
             }
         }
     }
@@ -171,8 +194,8 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
         const parts = name.split('@');
         if (parts.length === 3) {
             const x = parseFloat(parts);
-            const y = parseFloat(parts);
-            const z = parseFloat(parts);
+            const y = parseFloat(parts[1](https://otvet.mail.ru/question/240544470));
+            const z = parseFloat(parts[2](https://devforum.roblox.com/t/need-help-with-gamemode/1503888));
             if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
                 player.Position = new Vector3(x, y, z);
             }
@@ -181,7 +204,7 @@ RoomAPI.OnPlayerEnterZone.Add(function(player, zone) {
 
     // --- ПОДСКАЗКА (тег: hint) ---
     if (tag === "hint") {
-        if(player.Chat) player.Chat.SendMessage(name);
+        if (player.Chat) player.Chat.SendMessage(name);
     }
 });
 
@@ -194,13 +217,14 @@ RoomAPI.OnChatMessage.Add(function(player, message) {
     if (!pData) return;
 
     if (cmd === 'help') {
-        if(player.Chat) player.Chat.SendMessage("/tp(ID) - тп к игроку | /pop(Текст) - всем | /spawn(ID) - на спавн | /adm(ID) - админка | /ban(ID) - бан");
+        if (player.Chat) player.Chat.SendMessage("/tp(ID) - тп к игроку | /pop(Текст) - всем | /spawn(ID) - на спавн | /adm(ID) - админка | /ban(ID) - бан");
+        return;
     }
 
     if (cmd === 'tp') {
-        const match = args ? args.match(/$(\d+)$/) : null;
+        const match = args[1](https://otvet.mail.ru/question/240544470) ? args[1](https://otvet.mail.ru/question/240544470).match(/$(\d+)$/) : null;
         if (match) {
-            const targetId = parseInt(match);
+            const targetId = parseInt(match[1](https://otvet.mail.ru/question/240544470));
             const target = getPlayerByRoomId(targetId);
             if (target && target.Player) player.Position = target.Player.Position;
         }
@@ -216,33 +240,33 @@ RoomAPI.OnChatMessage.Add(function(player, message) {
     }
 
     if (cmd === 'spawn') {
-        const match = args ? args.match(/$(\d+)$/) : null;
+        const match = args[1](https://otvet.mail.ru/question/240544470) ? args[1](https://otvet.mail.ru/question/240544470).match(/$(\d+)$/) : null;
         if (match) {
-            const targetId = parseInt(match);
+            const targetId = parseInt(match[1](https://otvet.mail.ru/question/240544470));
             const target = getPlayerByRoomId(targetId);
             if (target && target.Player) target.Player.Spawns.Spawn();
         }
     }
 
     if (cmd === 'adm' && pData.isAdmin) {
-        const match = args ? args.match(/$(\d+)$/) : null;
+        const match = args[1](https://otvet.mail.ru/question/240544470) ? args[1](https://otvet.mail.ru/question/240544470).match(/$(\d+)$/) : null;
         if (match) {
-            const targetId = parseInt(match);
+            const targetId = parseInt(match[1](https://otvet.mail.ru/question/240544470));
             const targetData = getPlayerDataByRoomId(targetId);
             if (targetData) {
                 targetData.isAdmin = true;
                 targetData.canFly = true;
                 targetData.hasAllWeapons = true;
                 targetData.canBuild = true;
-                if(player.Chat) player.Chat.SendMessage("Админка выдана!");
+                if (player.Chat) player.Chat.SendMessage("Админка выдана!");
             }
         }
     }
 
     if (cmd === 'ban' && pData.isAdmin) {
-        const match = args ? args.match(/$(\d+)$/) : null;
+        const match = args[1](https://otvet.mail.ru/question/240544470) ? args[1](https://otvet.mail.ru/question/240544470).match(/$(\d+)$/) : null;
         if (match) {
-            const targetId = parseInt(match);
+            const targetId = parseInt(match[1](https://otvet.mail.ru/question/240544470));
             const target = getPlayerByRoomId(targetId);
             if (target && target.Player) target.Player.Kick("Вы забанены администратором");
         }
@@ -250,11 +274,15 @@ RoomAPI.OnChatMessage.Add(function(player, message) {
 });
 
 function giveItem(player, id) {
-    // ВАЖНО: Здесь нужно вставить реальный вызов API игры для выдачи предмета.
-    // Пример (может отличаться в вашей версии игры):
-    // player.Inventory.Add(id); 
-    // Или специфичный метод: Game.GiveItem(player, id);
-    console.log("Попытка выдачи предмета ID: " + id + " игроку: " + player.Name);
+    // ЗАГОЛОВОК ДЛЯ РАЗРАБОТЧИКА:
+    // Здесь нужно вставить реальный вызов API игры для выдачи предмета.
+    // В текущей версии API Pixel Combats 2 нет универсального метода Inventory.Add.
+    // Обычно это делается через Game.GiveItem или специфичный сервис.
+    // Пока выводим в консоль, чтобы не ломать игру ошибкой.
+    console.log("[GiveItem] Попытка выдачи предмета ID: " + id + " игроку: " + player.Name);
+    
+    // Пример (раскомментируйте и адаптируйте под актуальную версию API, если известно):
+    // if (Game && Game.GiveItem) Game.GiveItem(player, id);
 }
 
 function getPlayerByRoomId(roomId) {
@@ -277,14 +305,9 @@ function getPlayerDataByRoomId(roomId) {
 function updateUIStatus(player, data) {
     if (data.statuses.length > 0) {
         const lastStatus = data.statuses[data.statuses.length - 1];
-        // Логика обновления UI должна быть здесь, если у вас есть доступ к виджетам
-        // Например: setWidgetText('status_label', lastStatus.name);
+        // Логика обновления UI должна быть здесь
+        // console.log("Статус обновлен: " + lastStatus.name);
     }
-}
-
-function updateOnlineList() {
-    // Логика обновления списка игроков в UI
-    // console.log("Онлайн: " + players.size);
 }
 
 setInterval(function() {
@@ -292,18 +315,19 @@ setInterval(function() {
     const h = Math.floor(uptime / 3600);
     const m = Math.floor((uptime % 3600) / 60);
     const s = uptime % 60;
+    
     const timeString = h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0') + ":" + s.toString().padStart(2, '0');
-
+    
+    // Мигание текста каждые 20 сек
     let titleText = "Режим от Тяночки!";
     if (uptime % 20 === 0) {
         titleText = "/help - тут все команды!";
     }
 
-    colorIndex = (colorIndex + 1) % configObj.rainbowColors.length;
-    const color = configObj.rainbowColors[colorIndex];
+    colorIndex = (colorIndex + 1) % CONFIG.rainbowColors.length;
+    const color = CONFIG.rainbowColors[colorIndex];
     
-    // Здесь можно обновлять глобальные переменные для UI, если они есть
+    // Обновление глобальных переменных UI (если они есть в вашей реализации)
     // globalTitleText = titleText;
     // globalTitleColor = color;
 }, 1000);
-
